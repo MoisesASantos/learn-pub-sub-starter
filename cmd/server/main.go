@@ -31,7 +31,13 @@ func main() {
 	defer ch1.Close()
 
 	gamelogic.PrintServerHelp()
-
+	ch, queue, err := pubsub.DeclareAndBind(conn, routing.ExchangePerilTopic, "game_logs", "game_logs.*", pubsub.Durable)
+	if err != nil {
+		panic(err)
+	}
+	defer ch.Close()
+	fmt.Println("Queue declared:", queue.Name)
+	
 	for {
 		cmd := gamelogic.GetInput()
 
