@@ -8,6 +8,7 @@ import (
 
 	amqp "github.com/rabbitmq/amqp091-go"
 	"github.com/bootdotdev/learn-pub-sub-starter/internal/routing"
+	"github.com/bootdotdev/learn-pub-sub-starter/internal/gamelogic"
 	"github.com/bootdotdev/learn-pub-sub-starter/internal/pubsub"
 )
 
@@ -19,23 +20,53 @@ func main() {
 		panic(err)
 	}
 	defer conn.Close()
+
 	fmt.Println("Connected to RabbitMQ")
 
 	ch1, err := conn.Channel()
 	if err != nil {
 		fmt.Println(err)
-		return 
+		return
+	}
+	defer ch1.Close()
+
+	gamelogic.PrintServerHelp()
+
+	for {
+		cmd := gamelogic.GetInput()
+
+		if len(cmd) == 0 {
+			continue
+		}
+
+		switch cmd[0] {
+
+		case "pause":
+			fmt.Println("Sending pause message")
+			val := routing.PlayingState{
+				IsPaused: true,
+			}
+			pubsub.PublishJSON(ch1, routing.ExchangePerilDirect, routing.PauseKey, val)
+
+		case "resume":
+			fmt.Println("Sending resume message")
+			val := routing.PlayingState{
+				IsPaused: false,
+			}
+			pubsub.PublishJSON(ch1, routing.ExchangePerilDirect, routing.PauseKey, val)
+
+		case "quit":
+			fmt.Println("Exiting...")
+			break
+
+		default:
+			fmt.Println("I don't understand that command")
+		}
 	}
 
-	val := routing.PlayingState{
-		IsPaused:	true,
-	}
-	pubsub.PublishJSON(ch1, routing.ExchangePerilDirect, routing.PauseKey, val)
-	// Canal para receber sinais do sistema operativo
 	sigCh := make(chan os.Signal, 1)
-	// Escuta Ctrl+C (SIGINT) e SIGTERM
+
 	signal.Notify(sigCh, os.Interrupt, syscall.SIGTERM)
-	// Espera até receber um sinal
 	<-sigCh
 
 	fmt.Println("Shutting down...")
