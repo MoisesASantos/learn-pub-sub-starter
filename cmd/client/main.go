@@ -3,6 +3,7 @@ package main
 import (
 	"fmt"
 	"log"
+	"time"
 	"strings"
 	"github.com/bootdotdev/learn-pub-sub-starter/internal/gamelogic"
 	"github.com/bootdotdev/learn-pub-sub-starter/internal/routing"
@@ -16,7 +17,6 @@ func handlerPause(gs *gamelogic.GameState) func(routing.PlayingState) pubsub.Ack
 		defer fmt.Print("> ")
 
 		gs.HandlePause(state)
-
 		return pubsub.Ack
 	}
 }
@@ -52,12 +52,36 @@ func handlerMove(gs *gamelogic.GameState, ch *amqp.Channel, username string) fun
 	}
 }
 
-func handlerWarMessage(gs *gamelogic.GameState) func(gamelogic.RecognitionOfWar) pubsub.Acktype {
+func publishGameLog(ch *amqp.Channel, username string, message string) pubsub.Acktype {
+
+	log := routing.GameLog{
+		CurrentTime: time.Now(),
+		Message:     message,
+		Username:    username,
+	}
+
+	err := pubsub.PublishGob(
+		ch,
+		routing.ExchangePerilTopic,
+		routing.GameLogSlug+"."+username,
+		log,
+	)
+
+	if err != nil {
+		fmt.Println("Error publishing game log:", err)
+		return pubsub.NackRequeue
+	}
+
+	return pubsub.Ack
+}
+
+func handlerWarMessage(gs *gamelogic.GameState, ch *amqp.Channel, username string) func(gamelogic.RecognitionOfWar) pubsub.Acktype {
 	return func(rw gamelogic.RecognitionOfWar) pubsub.Acktype {
 		
 		defer fmt.Print("> ")
 		
-		outCome, _, _ := gs.HandleWar(rw)
+		outCome, winner, loser := gs.HandleWar(rw)
+		var message string
 
 		switch outCome {
 			case gamelogic.WarOutcomeNotInvolved:
@@ -67,13 +91,17 @@ func handlerWarMessage(gs *gamelogic.GameState) func(gamelogic.RecognitionOfWar)
 			    return pubsub.NackDiscard
 
 			case gamelogic.WarOutcomeOpponentWon:
-			    return pubsub.Ack
+				message = fmt.Sprintf("%s won a war against %s", winner, loser)
+				return publishGameLog(ch, username, message)
 			
 			case gamelogic.WarOutcomeYouWon:
-			    return pubsub.Ack
+				message = fmt.Sprintf("%s won a war against %s", winner, loser)
+				return publishGameLog(ch, username, message)
 			
 			case gamelogic.WarOutcomeDraw:
-			    return pubsub.Ack
+				message = fmt.Sprintf("A war between %s and %s resulted in a draw", winner, loser)
+				return publishGameLog(ch, username, message)
+			
 			default:
 				fmt.Println("Error occurred")
 				return pubsub.NackDiscard
@@ -114,7 +142,7 @@ func main() {
 	queueName1 := strings.Join(elements1, ".")
 	pubsub.SubscribeJSON(conn, routing.ExchangePerilTopic, queueName1, "army_moves.*", pubsub.Transient, handlerMove(gamestate, ch, username))
 	
-	err = pubsub.SubscribeJSON(conn, routing.ExchangePerilTopic, "war", "war.*", pubsub.Durable, handlerWarMessage(gamestate))
+	err = pubsub.SubscribeJSON(conn, routing.ExchangePerilTopic, "war", "war.*", pubsub.Durable, handlerWarMessage(gamestate, ch, username))
 	if err != nil {
 		log.Fatal(err)
 	}

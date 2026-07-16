@@ -2,10 +2,51 @@ package pubsub
 
 import (
 	"encoding/json"
+	"encoding/gob"
 	"context"
 	"fmt"
+	"bytes"
 	amqp "github.com/rabbitmq/amqp091-go"
 )
+
+type SimpleQueueType int
+
+const (
+	Durable SimpleQueueType = iota
+	Transient
+)
+
+type Acktype int
+
+const (
+	Ack Acktype = iota
+	NackRequeue
+	NackDiscard
+)
+
+func PublishGob[T any](ch *amqp.Channel, exchange, key string, val T) error {
+
+	var data bytes.Buffer
+	enc := gob.NewEncoder(&data)
+	err := enc.Encode(val)
+	if err != nil {
+		return err
+	}
+
+	ctx := context.Background()
+	msg := amqp.Publishing{
+		ContentType: "application/gob",
+		Body:        data.Bytes(),
+	}
+
+	err = ch.PublishWithContext(ctx, exchange, key, false, false, msg)
+	if err != nil {
+		fmt.Println("Error publishing:", err)
+		return err
+	}
+	return nil
+}
+
 
 func PublishJSON[T any](ch *amqp.Channel, exchange, key string, val T) error {
 
@@ -28,21 +69,6 @@ func PublishJSON[T any](ch *amqp.Channel, exchange, key string, val T) error {
 	}
 	return nil
 }
-
-type SimpleQueueType int
-
-const (
-	Durable SimpleQueueType = iota
-	Transient
-)
-
-type Acktype int
-
-const (
-	Ack Acktype = iota
-	NackRequeue
-	NackDiscard
-)
 
 func DeclareAndBind(conn *amqp.Connection, exchange, queueName, key string, queueType SimpleQueueType) (*amqp.Channel, amqp.Queue, error) {
 
@@ -125,3 +151,5 @@ func SubscribeJSON[T any](conn *amqp.Connection, exchange, queueName, key string
 	go marshalQueue(deliveries, handler)
 	return nil
 }
+
+
