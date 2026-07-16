@@ -104,41 +104,23 @@ func DeclareAndBind(conn *amqp.Connection, exchange, queueName, key string, queu
 	return ch, queue, nil
 }
 
-func marshalQueue[T any](deliveries <-chan amqp.Delivery, handler func(T) Acktype) {
-	
-	for message := range deliveries {
-		
-		var data T
-		err := json.Unmarshal(message.Body, &data)
-		if err != nil {
-			fmt.Println("Erro ao fazer unmarshal:", err)
-			continue
-		}
-		//call the handler action
-		result := handler(data)
-		switch result {
+func subscribe[T any](
+	conn *amqp.Connection,
+	exchange,
+	queueName,
+	key string,
+	queueType SimpleQueueType,
+	handler func(T) Acktype,
+	unmarshaller func([]byte) (T, error),
+) error {
 
-			case Ack:
-			    err = message.Ack(false)
-				fmt.Println("Ack action occurred")
-			
-			case NackRequeue:
-			    err = message.Nack(false, true)
-				fmt.Println("Nack requeue action occurred")
-			
-			case NackDiscard:
-			    err = message.Nack(false, false)
-				fmt.Println("Nack delete action occurred")
-		}
-		if err != nil {
-			fmt.Println("Erro no ack:", err)
-		}
-	}
-}
-
-func SubscribeJSON[T any](conn *amqp.Connection, exchange, queueName, key string, queueType SimpleQueueType, handler func(T) Acktype) error {
-
-	ch, queue, err := DeclareAndBind(conn, exchange, queueName, key, queueType,)
+	ch, queue, err := DeclareAndBind(
+		conn,
+		exchange,
+		queueName,
+		key,
+		queueType,
+	)
 	if err != nil {
 		return err
 	}
@@ -147,9 +129,64 @@ func SubscribeJSON[T any](conn *amqp.Connection, exchange, queueName, key string
 	if err != nil {
 		return err
 	}
-	
-	go marshalQueue(deliveries, handler)
+
+	go func() {
+		for delivery := range deliveries {
+
+			data, err := unmarshaller(delivery.Body)
+			if err != nil {
+				fmt.Println(err)
+				_ = delivery.Nack(false, false)
+				continue
+			}
+
+			result := handler(data)
+
+			switch result {
+			case Ack:
+				_ = delivery.Ack(false)
+
+			case NackRequeue:
+				_ = delivery.Nack(false, true)
+
+			case NackDiscard:
+				_ = delivery.Nack(false, false)
+			}
+		}
+	}()
+
 	return nil
 }
 
+func DecodeJSON[T any](data []byte) (T, error) {
+	var value T
 
+	err := json.Unmarshal(data, &value)
+	if err != nil {
+		return value, err
+	}
+
+	return value, nil
+}
+
+func DecodeGob[T any](data []byte) (T, error) {
+	var value T
+
+	dec := gob.NewDecoder(bytes.NewReader(data))
+
+	err := dec.Decode(&value)
+	if err != nil {
+		return value, err
+	}
+
+	return value, nil
+}
+
+
+func SubscribeJSON[T any](conn *amqp.Connection, exchange, queueName, key string, queueType SimpleQueueType, handler func(T) Acktype) error {
+	return subscribe(conn, exchange, queueName, key, queueType, handler, DecodeJSON[T])
+}
+
+func SubscribeGob[T any](conn *amqp.Connection, exchange, queueName, key string, queueType SimpleQueueType, handler func(T) Acktype) error {
+	return subscribe(conn, exchange, queueName, key, queueType, handler, DecodeGob[T])
+}

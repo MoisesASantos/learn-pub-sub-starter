@@ -12,6 +12,17 @@ import (
 	"github.com/bootdotdev/learn-pub-sub-starter/internal/pubsub"
 )
 
+func handlerLog() func(routing.GameLog) pubsub.Acktype {
+	return func(gamelog routing.GameLog) pubsub.Acktype {
+		defer fmt.Print("> ")
+		err := gamelogic.WriteLog(gamelog)
+		if err != nil {
+			return pubsub.NackDiscard
+		}
+		return pubsub.Ack
+	}
+}
+
 func main() {
 	fmt.Println("Starting Peril server...")
 
@@ -37,6 +48,7 @@ func main() {
 	}
 	defer ch.Close()
 	fmt.Println("Queue declared:", queue.Name)
+	pubsub.SubscribeGob(conn, routing.ExchangePerilTopic, queue.Name, "game_logs.*", pubsub.Durable, handlerLog())
 	
 	for {
 		cmd := gamelogic.GetInput()
