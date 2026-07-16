@@ -39,8 +39,9 @@ func handlerMove(gs *gamelogic.GameState, ch *amqp.Channel, username string) fun
 				err := pubsub.PublishJSON(ch, routing.ExchangePerilTopic, routing.WarRecognitionsPrefix+"."+username, data)
 				if err != nil {
 					return pubsub.NackRequeue
+				} else {
+					return pubsub.Ack
 				}
-				return pubsub.NackRequeue
 
 			case gamelogic.MoveOutcomeSamePlayer:
 			    return pubsub.NackDiscard
