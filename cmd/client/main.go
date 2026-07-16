@@ -2,6 +2,7 @@ package main
 
 import (
 	"fmt"
+	"log"
 	"strings"
 	"github.com/bootdotdev/learn-pub-sub-starter/internal/gamelogic"
 	"github.com/bootdotdev/learn-pub-sub-starter/internal/routing"
@@ -10,19 +11,75 @@ import (
 )
 
 
-func handlerPause(gs *gamelogic.GameState) func(routing.PlayingState) {
-	return func(state routing.PlayingState) {
+func handlerPause(gs *gamelogic.GameState) func(routing.PlayingState) pubsub.Acktype {
+	return func(state routing.PlayingState) pubsub.Acktype {
 		defer fmt.Print("> ")
+
 		gs.HandlePause(state)
+
+		return pubsub.Ack
 	}
 }
 
-func handlerMove(gs *gamelogic.GameState) func(gamelogic.ArmyMove) {
-	return func(move gamelogic.ArmyMove) {
+func handlerMove(gs *gamelogic.GameState, ch *amqp.Channel, username string) func(gamelogic.ArmyMove) pubsub.Acktype {
+	return func(move gamelogic.ArmyMove) pubsub.Acktype {
 		defer fmt.Print("> ")
-		gs.HandleMove(move)
+		
+		outCome := gs.HandleMove(move)
+		switch outCome {
+
+			case gamelogic.MoveOutComeSafe:
+				return pubsub.Ack
+			    
+			case gamelogic.MoveOutcomeMakeWar:
+				data := gamelogic.RecognitionOfWar{
+					Attacker: move.Player,
+					Defender: gs.GetPlayerSnap(),
+				}
+				err := pubsub.PublishJSON(ch, routing.ExchangePerilTopic, routing.WarRecognitionsPrefix+"."+username, data)
+				if err != nil {
+					return pubsub.NackRequeue
+				}
+				return pubsub.NackRequeue
+
+			case gamelogic.MoveOutcomeSamePlayer:
+			    return pubsub.NackDiscard
+			
+			default:
+				return pubsub.NackDiscard
+		}
 	}
 }
+
+func handlerWarMessage(gs *gamelogic.GameState) func(gamelogic.RecognitionOfWar) pubsub.Acktype {
+	return func(rw gamelogic.RecognitionOfWar) pubsub.Acktype {
+		
+		defer fmt.Print("> ")
+		
+		outCome, _, _ := gs.HandleWar(rw)
+
+		switch outCome {
+			case gamelogic.WarOutcomeNotInvolved:
+				return pubsub.NackRequeue
+			
+			case gamelogic.WarOutcomeNoUnits:
+			    return pubsub.NackDiscard
+
+			case gamelogic.WarOutcomeOpponentWon:
+			    return pubsub.Ack
+			
+			case gamelogic.WarOutcomeYouWon:
+			    return pubsub.Ack
+			
+			case gamelogic.WarOutcomeDraw:
+			    return pubsub.Ack
+			default:
+				fmt.Println("Error occurred")
+				return pubsub.NackDiscard
+		}
+	}
+}
+
 
 func main() {
 	fmt.Println("Starting Peril client...")
@@ -54,8 +111,13 @@ func main() {
 
 	elements1 := []string{routing.ArmyMovesPrefix, username}
 	queueName1 := strings.Join(elements1, ".")
-	pubsub.SubscribeJSON(conn, routing.ExchangePerilTopic, queueName1, "army_moves.*", pubsub.Transient, handlerMove(gamestate))
+	pubsub.SubscribeJSON(conn, routing.ExchangePerilTopic, queueName1, "army_moves.*", pubsub.Transient, handlerMove(gamestate, ch, username))
 	
+	err = pubsub.SubscribeJSON(conn, routing.ExchangePerilTopic, "war", "war.*", pubsub.Durable, handlerWarMessage(gamestate))
+	if err != nil {
+		log.Fatal(err)
+	}
+
 	running := true
 	for running  {
 		cmd := gamelogic.GetInput()

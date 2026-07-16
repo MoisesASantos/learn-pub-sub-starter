@@ -36,6 +36,14 @@ const (
 	Transient
 )
 
+type Acktype int
+
+const (
+	Ack Acktype = iota
+	NackRequeue
+	NackDiscard
+)
+
 func DeclareAndBind(conn *amqp.Connection, exchange, queueName, key string, queueType SimpleQueueType) (*amqp.Channel, amqp.Queue, error) {
 
 	ch, err := conn.Channel()
@@ -54,7 +62,10 @@ func DeclareAndBind(conn *amqp.Connection, exchange, queueName, key string, queu
 		exclusive = true
 	}
 
-	queue, err := ch.QueueDeclare(queueName, durable, autoDelete, exclusive, false, nil)
+	headers:= amqp.Table{
+		"x-dead-letter-exchange": "peril_dlx",
+	}
+	queue, err := ch.QueueDeclare(queueName, durable, autoDelete, exclusive, false, headers)
 	if err != nil {
 		return nil, amqp.Queue{}, err
 	}
@@ -67,24 +78,39 @@ func DeclareAndBind(conn *amqp.Connection, exchange, queueName, key string, queu
 	return ch, queue, nil
 }
 
-func marshalQueue[T any](deliveries <-chan amqp.Delivery, handler func(T)) {
+func marshalQueue[T any](deliveries <-chan amqp.Delivery, handler func(T) Acktype) {
 	
 	for message := range deliveries {
+		
 		var data T
 		err := json.Unmarshal(message.Body, &data)
 		if err != nil {
 			fmt.Println("Erro ao fazer unmarshal:", err)
 			continue
 		}
-		handler(data)
-		err = message.Ack(false)
+		//call the handler action
+		result := handler(data)
+		switch result {
+
+			case Ack:
+			    err = message.Ack(false)
+				fmt.Println("Ack action occurred")
+			
+			case NackRequeue:
+			    err = message.Nack(false, true)
+				fmt.Println("Nack requeue action occurred")
+			
+			case NackDiscard:
+			    err = message.Nack(false, false)
+				fmt.Println("Nack delete action occurred")
+		}
 		if err != nil {
 			fmt.Println("Erro no ack:", err)
 		}
 	}
 }
 
-func SubscribeJSON[T any](conn *amqp.Connection, exchange, queueName, key string, queueType SimpleQueueType, handler func(T)) error {
+func SubscribeJSON[T any](conn *amqp.Connection, exchange, queueName, key string, queueType SimpleQueueType, handler func(T) Acktype) error {
 
 	ch, queue, err := DeclareAndBind(conn, exchange, queueName, key, queueType,)
 	if err != nil {
