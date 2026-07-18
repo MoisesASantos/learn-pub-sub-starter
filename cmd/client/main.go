@@ -5,6 +5,7 @@ import (
 	"log"
 	"time"
 	"strings"
+	"strconv"
 	"github.com/bootdotdev/learn-pub-sub-starter/internal/gamelogic"
 	"github.com/bootdotdev/learn-pub-sub-starter/internal/routing"
 	"github.com/bootdotdev/learn-pub-sub-starter/internal/pubsub"
@@ -110,6 +111,20 @@ func handlerWarMessage(gs *gamelogic.GameState, ch *amqp.Channel, username strin
 }
 
 
+func handleSpam(ch *amqp.Channel, num int, username string) {
+
+	for i := 0; i < num; i++ {
+		msg := gamelogic.GetMaliciousLog()
+		err := pubsub.PublishJSON(ch, routing.ExchangePerilTopic, routing.GameLogSlug+"."+username, msg)
+		if err != nil {
+			fmt.Println(err)
+			return
+		}
+	}
+}
+
+
+
 func main() {
 	fmt.Println("Starting Peril client...")
 
@@ -176,7 +191,14 @@ func main() {
 			gamelogic.PrintClientHelp()
 
 		case "spam":
-			fmt.Println("Spamming not allowed yet!")
+			if len(cmd[1]) == 0 {
+				fmt.Println("Spam command need to have a second argument")
+			}
+			num, err := strconv.Atoi(cmd[1])
+			if err != nil {
+				fmt.Printf("Conversion failed: %v", err)
+			}
+			handleSpam(ch, num, username)
 
 		case "quit":
 			gamelogic.PrintQuit()
