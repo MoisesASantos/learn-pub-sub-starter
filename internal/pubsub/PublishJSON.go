@@ -125,6 +125,15 @@ func subscribe[T any](
 		return err
 	}
 
+	err = ch.Qos(
+    	10,    // prefetch count
+    	0,     // prefetch size (0 = ignorado)
+    	false, // aplica apenas a este consumer
+	)	
+	if err != nil {
+    	return err
+	}
+
 	deliveries, err := ch.Consume(queue.Name, "", false, false, false, false, nil)
 	if err != nil {
 		return err
